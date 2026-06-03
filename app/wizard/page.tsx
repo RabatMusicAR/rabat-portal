@@ -275,7 +275,7 @@ function WizardPageInner() {
       if (!folderRes.ok) throw new Error('Error al crear carpetas');
       const { releaseFolderId, tracksFolderId } = await folderRes.json();
 
-      // 2. Subir portada
+      // 2. Subir portada — solo variable local, no actualiza estado
       let coverDriveId = '';
       if (coverFileRef.current) {
         setSubmitStep('Subiendo portada…');
@@ -287,49 +287,44 @@ function WizardPageInner() {
           `cover.${ext}`,
         );
       }
-      updateRelease('cover_drive_id', coverDriveId);
 
-      // 3. Subir audios de cada pista
-      const updatedTracks = [...tracks];
-      const totalAudios = tracks.filter((t) => audioFilesRef.current[t.id]).length;
+      // 3. Subir audios — copia local, nunca se escribe al estado hasta el éxito total
+      const localTracks = tracks.map((t) => ({ ...t }));
+      const totalAudios = localTracks.filter((t) => audioFilesRef.current[t.id]).length;
       let audiosDone = 0;
 
-      for (let i = 0; i < updatedTracks.length; i++) {
-        const track = updatedTracks[i];
+      for (let i = 0; i < localTracks.length; i++) {
+        const track = localTracks[i];
         const file = audioFilesRef.current[track.id];
         if (file) {
-          setSubmitStep(`Subiendo audio ${i + 1} de ${tracks.length}…`);
+          setSubmitStep(`Subiendo audio ${i + 1} de ${localTracks.length}…`);
           setSubmitProgress(20 + Math.round((audiosDone / Math.max(totalAudios, 1)) * 60));
           const safeTitle = track.title.replace(/[/\\?%*:|"<>]/g, '-') || `track-${i + 1}`;
           const ext = file.name.split('.').pop() ?? 'wav';
-          const audioDriveId = await uploadFileToDrive(
-            file,
-            tracksFolderId,
-            `${String(i + 1).padStart(2, '0')}_${safeTitle}.${ext}`,
-          );
-          updatedTracks[i] = { ...track, audio_drive_id: audioDriveId };
+          localTracks[i] = {
+            ...track,
+            audio_drive_id: await uploadFileToDrive(
+              file,
+              tracksFolderId,
+              `${String(i + 1).padStart(2, '0')}_${safeTitle}.${ext}`,
+            ),
+          };
           audiosDone++;
         }
       }
-
-      setTracks(updatedTracks);
 
       // 4. Guardar en Sheets
       setSubmitStep('Guardando en el sistema de RABAT…');
       setSubmitProgress(85);
 
-      // Generar IDs legibles para tracks, créditos y splits justo antes de enviar
-      const tracksForSheet = updatedTracks.map((t, i) => {
-        const tid = makeId(t.title || `track-${i + 1}`);
-        return {
-          ...t,
-          id: tid,
-          credits: t.credits.map((c) => ({
-            ...c,
-            id: makeId(`${c.first_name}-${c.last_name}`),
-          })),
-        };
-      });
+      const tracksForSheet = localTracks.map((t, i) => ({
+        ...t,
+        id: makeId(t.title || `track-${i + 1}`),
+        credits: t.credits.map((c) => ({
+          ...c,
+          id: makeId(`${c.first_name}-${c.last_name}`),
+        })),
+      }));
       const splitsForSheet = splits.map((s) => ({
         ...s,
         id: makeId(s.recipient_name || 'split'),
@@ -351,12 +346,13 @@ function WizardPageInner() {
         throw new Error(error ?? 'Error al guardar');
       }
 
-      // 5. Limpiar localStorage y mostrar éxito
+      // 5. Solo aquí, con todo confirmado, limpiamos localStorage y mostramos éxito
       localStorage.removeItem('rabat_wizard');
       setSubmitProgress(100);
       setSubmitted(true);
     } catch (err) {
       console.error(err);
+      // No actualizamos estado → el formulario queda intacto para reintentar
       setSubmitting(false);
       alert(`Error: ${(err as Error).message}. Por favor, inténtalo de nuevo.`);
     }
