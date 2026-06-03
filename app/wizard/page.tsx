@@ -191,21 +191,31 @@ function WizardPageInner() {
       const saved = localStorage.getItem('rabat_wizard');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.release) setRelease(parsed.release);
+        if (parsed.release) {
+          // cover_preview no se persiste (es base64, demasiado grande para localStorage)
+          setRelease({ ...EMPTY_RELEASE, ...parsed.release, cover_preview: '' });
+        }
         if (parsed.tracks) setTracks(parsed.tracks);
         if (parsed.splits) setSplits(parsed.splits);
         if (parsed.step) setStep(parsed.step);
       }
     } catch {
-      // ignore parse errors
+      localStorage.removeItem('rabat_wizard');
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      'rabat_wizard',
-      JSON.stringify({ release, tracks, splits, step }),
-    );
+    try {
+      // Excluimos cover_preview: puede pesar varios MB (base64 de imagen)
+      // y reventaría el límite de ~5 MB de localStorage
+      const { cover_preview: _omit, ...releaseToSave } = release;
+      localStorage.setItem(
+        'rabat_wizard',
+        JSON.stringify({ release: releaseToSave, tracks, splits, step }),
+      );
+    } catch {
+      // QuotaExceededError u otro error de storage — ignorar silenciosamente
+    }
   }, [release, tracks, splits, step]);
 
   // ── Helpers de estado ───────────────────────────────────────────────────────
