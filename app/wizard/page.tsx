@@ -274,47 +274,67 @@ function WizardPageInner() {
       }
       const { releaseFolderId, tracksFolderId } = folderData;
 
-      // 2. Subir portada
+      // 2 & 3. Subir portada y todos los audios EN PARALELO
       let coverDriveId = '';
+      // Tiempo total = el archivo más grande (no la suma de todos)
+      setSubmitStep('Subiendo archivos a Drive…');
+      setSubmitProgress(10);
+
+      const localTracks = tracks.map((t) => ({ ...t }));
+
+      // Progreso por archivo: promedio ponderado de todos los uploads activos
+      const progressMap: Record<string, number> = {};
+      const totalFiles =
+        (coverFileRef.current ? 1 : 0) +
+        localTracks.filter((t) => audioFilesRef.current[t.id]).length;
+
+      const updateCombinedProgress = () => {
+        const values = Object.values(progressMap);
+        if (!values.length) return;
+        const avg = values.reduce((a, b) => a + b, 0) / totalFiles;
+        setSubmitProgress(10 + Math.round(avg * 0.75)); // 10 → 85%
+      };
+
+      // Construir las promesas de upload en paralelo
+      const uploadPromises: Promise<void>[] = [];
+
       if (coverFileRef.current) {
-        setSubmitStep('Subiendo portada…');
-        setSubmitProgress(10);
         const ext = coverFileRef.current.name.split('.').pop() ?? 'jpg';
-        coverDriveId = await uploadFileToDrive(
-          coverFileRef.current,
-          releaseFolderId,
-          `cover.${ext}`,
-          (pct) => setSubmitProgress(10 + Math.round(pct * 0.15)), // 10→25%
+        progressMap['cover'] = 0;
+        uploadPromises.push(
+          uploadFileToDrive(
+            coverFileRef.current,
+            releaseFolderId,
+            `cover.${ext}`,
+            (pct) => { progressMap['cover'] = pct; updateCombinedProgress(); },
+          ).then((id) => { coverDriveId = id; progressMap['cover'] = 100; }),
         );
       }
-
-      // 3. Subir audios con progreso real por archivo
-      const localTracks = tracks.map((t) => ({ ...t }));
-      const audioFiles = localTracks.filter((t) => audioFilesRef.current[t.id]);
-      const totalAudios = audioFiles.length;
 
       for (let i = 0; i < localTracks.length; i++) {
         const track = localTracks[i];
         const file = audioFilesRef.current[track.id];
         if (file) {
-          const audioIndex = audioFiles.indexOf(track) + 1;
-          const baseProgress = 25 + Math.round(((audioIndex - 1) / totalAudios) * 60);
-          const nextProgress = 25 + Math.round((audioIndex / totalAudios) * 60);
-          setSubmitStep(`Subiendo audio ${audioIndex} de ${totalAudios} — ${track.title}`);
-          setSubmitProgress(baseProgress);
+          const key = `audio_${i}`;
+          progressMap[key] = 0;
           const safeTitle = track.title.replace(/[/\\?%*:|"<>]/g, '-') || `track-${i + 1}`;
           const ext = file.name.split('.').pop() ?? 'wav';
-          localTracks[i] = {
-            ...track,
-            audio_drive_id: await uploadFileToDrive(
+          const idx = i; // capturar para el closure
+          uploadPromises.push(
+            uploadFileToDrive(
               file,
               tracksFolderId,
               `${String(i + 1).padStart(2, '0')}_${safeTitle}.${ext}`,
-              (pct) => setSubmitProgress(baseProgress + Math.round(pct * (nextProgress - baseProgress) / 100)),
-            ),
-          };
+              (pct) => { progressMap[key] = pct; updateCombinedProgress(); },
+            ).then((id) => {
+              localTracks[idx] = { ...localTracks[idx], audio_drive_id: id };
+              progressMap[key] = 100;
+            }),
+          );
         }
       }
+
+      await Promise.all(uploadPromises);
 
       // 4. Guardar en Sheets
       setSubmitStep('Guardando en el sistema de RABAT…');
