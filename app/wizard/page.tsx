@@ -321,12 +321,15 @@ function WizardPageInner() {
         body: JSON.stringify({
           release_id: rid,
           artist_email: artistEmail,
-          release: { ...release, cover_drive_id: coverDriveId },
+          // Excluir cover_preview (base64, puede ser 3-5 MB) y cover_filename (solo UI)
+          // para no superar el límite de 4.5 MB de Vercel
+          release: (({ cover_preview: _p, cover_filename: _f, ...r }) =>
+            ({ ...r, cover_drive_id: coverDriveId }))(release),
           tracks: tracksForSheet,
           splits: splitsForSheet,
         }),
       });
-      const submitData = await submitRes.json().catch(() => null);
+      const submitData = await submitRes.json().catch(() => null) as { ok?: boolean; error?: string } | null;
       if (!submitRes.ok || !submitData) {
         throw new Error(submitData?.error ?? `Error al guardar en Sheets (HTTP ${submitRes.status})`);
       }
