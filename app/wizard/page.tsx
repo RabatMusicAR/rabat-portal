@@ -94,58 +94,72 @@ function getMimeType(file: File): string {
 }
 
 /**
- * Sube un archivo a Drive en trozos de 3 MB a través del servidor.
+ * Sube un archivo directo del browser a Google Drive.
  *
- * Por qué no upload directo browser → Drive:
- *   Las sesiones de resumable upload de Drive están ligadas al cliente que las
- *   crea. Si el servidor crea la sesión y el browser intenta usarla, Drive
- *   devuelve 403 (sesión no portable). La solución es que el servidor que creó
- *   la sesión también haga los PUT de cada chunk.
+ * Flujo:
+ *   1. Servidor crea sesión de resumable upload (tiny request, solo metadatos)
+ *      e incluye el Origin del browser → Drive habilita CORS + devuelve token
+ *   2. Browser hace PUT directo a Drive con Authorization + XHR para progreso real
  *
- * Por qué chunks:
- *   Vercel limita los request bodies a 4.5 MB. Con chunks de 3 MB cada petición
- *   entra dentro del límite aunque el archivo completo sea de 40-50 MB.
+ * Ventaja vs chunked-via-server:
+ *   - Un solo salto de red para los bytes (browser → Drive, sin pasar por Vercel)
+ *   - Sin límite de tamaño (no hay Vercel 4.5 MB en el camino del archivo)
+ *   - Progreso real en tiempo real via XHR onprogress
+ *
+ * Si el PUT directo falla (CORS edge case), cae al upload chunked via servidor.
  */
-const CHUNK_SIZE = 3 * 1024 * 1024; // 3 MB por chunk
-
 async function uploadFileToDrive(
   file: File,
   folderId: string,
   filename: string,
+  onProgress?: (pct: number) => void,
 ): Promise<string> {
-  const mimeType   = getMimeType(file);
-  const totalSize  = file.size;
-  const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
-  let sessionUrl: string | null = null;
+  const mimeType = getMimeType(file);
 
-  for (let i = 0; i < totalChunks; i++) {
-    const start = i * CHUNK_SIZE;
-    const end   = Math.min(start + CHUNK_SIZE, totalSize) - 1; // inclusive
-
-    const form = new FormData();
-    form.append('chunk',      file.slice(start, end + 1));
-    form.append('start',      String(start));
-    form.append('end',        String(end));
-    form.append('totalSize',  String(totalSize));
-    form.append('folderId',   folderId);
-    form.append('filename',   filename);
-    form.append('mimeType',   mimeType);
-    if (sessionUrl) form.append('sessionUrl', sessionUrl);
-
-    const res = await fetch('/api/drive/upload-chunk', { method: 'POST', body: form });
-
-    if (!res.ok) {
-      const { error } = await res.json().catch(() => ({})) as { error?: string };
-      throw new Error(error ?? `Error en chunk ${i + 1} de ${totalChunks}`);
-    }
-
-    const data = await res.json().catch(() => null) as { sessionUrl?: string; fileId?: string } | null;
-    if (!data) throw new Error('Respuesta inválida del servidor al subir archivo');
-    if (data.fileId) return data.fileId;
-    if (data.sessionUrl) sessionUrl = data.sessionUrl;
+  // 1. Servidor crea la sesión — solo metadatos, muy rápido
+  const sessionRes = await fetch('/api/drive/prepare-upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId, filename, mimeType }),
+  });
+  if (!sessionRes.ok) {
+    const d = await sessionRes.json().catch(() => ({})) as { error?: string };
+    throw new Error(d.error ?? 'No se pudo crear la sesión de upload');
   }
+  const { uploadUrl, accessToken } = await sessionRes.json();
 
-  throw new Error('Upload completado pero Drive no devolvió el ID del archivo');
+  // 2. Browser sube directo a Drive usando XHR (soporta eventos de progreso)
+  return new Promise<string>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', mimeType);
+    xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 200 || xhr.status === 201) {
+        try {
+          const data = JSON.parse(xhr.responseText) as { id?: string };
+          if (data.id) return resolve(data.id);
+          reject(new Error('Drive no devolvió el ID del archivo'));
+        } catch {
+          reject(new Error('Respuesta inválida de Drive'));
+        }
+      } else {
+        reject(new Error(`Error subiendo a Drive: HTTP ${xhr.status} — ${xhr.responseText.slice(0, 200)}`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Error de red al subir el archivo a Drive'));
+    xhr.ontimeout = () => reject(new Error('Timeout al subir el archivo a Drive'));
+    xhr.timeout = 10 * 60 * 1000; // 10 minutos máximo por archivo
+    xhr.send(file);
+  });
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
@@ -260,30 +274,34 @@ function WizardPageInner() {
       }
       const { releaseFolderId, tracksFolderId } = folderData;
 
-      // 2. Subir portada — solo variable local, no actualiza estado
+      // 2. Subir portada
       let coverDriveId = '';
       if (coverFileRef.current) {
         setSubmitStep('Subiendo portada…');
-        setSubmitProgress(15);
+        setSubmitProgress(10);
         const ext = coverFileRef.current.name.split('.').pop() ?? 'jpg';
         coverDriveId = await uploadFileToDrive(
           coverFileRef.current,
           releaseFolderId,
           `cover.${ext}`,
+          (pct) => setSubmitProgress(10 + Math.round(pct * 0.15)), // 10→25%
         );
       }
 
-      // 3. Subir audios — copia local, nunca se escribe al estado hasta el éxito total
+      // 3. Subir audios con progreso real por archivo
       const localTracks = tracks.map((t) => ({ ...t }));
-      const totalAudios = localTracks.filter((t) => audioFilesRef.current[t.id]).length;
-      let audiosDone = 0;
+      const audioFiles = localTracks.filter((t) => audioFilesRef.current[t.id]);
+      const totalAudios = audioFiles.length;
 
       for (let i = 0; i < localTracks.length; i++) {
         const track = localTracks[i];
         const file = audioFilesRef.current[track.id];
         if (file) {
-          setSubmitStep(`Subiendo audio ${i + 1} de ${localTracks.length}…`);
-          setSubmitProgress(20 + Math.round((audiosDone / Math.max(totalAudios, 1)) * 60));
+          const audioIndex = audioFiles.indexOf(track) + 1;
+          const baseProgress = 25 + Math.round(((audioIndex - 1) / totalAudios) * 60);
+          const nextProgress = 25 + Math.round((audioIndex / totalAudios) * 60);
+          setSubmitStep(`Subiendo audio ${audioIndex} de ${totalAudios} — ${track.title}`);
+          setSubmitProgress(baseProgress);
           const safeTitle = track.title.replace(/[/\\?%*:|"<>]/g, '-') || `track-${i + 1}`;
           const ext = file.name.split('.').pop() ?? 'wav';
           localTracks[i] = {
@@ -292,9 +310,9 @@ function WizardPageInner() {
               file,
               tracksFolderId,
               `${String(i + 1).padStart(2, '0')}_${safeTitle}.${ext}`,
+              (pct) => setSubmitProgress(baseProgress + Math.round(pct * (nextProgress - baseProgress) / 100)),
             ),
           };
-          audiosDone++;
         }
       }
 
