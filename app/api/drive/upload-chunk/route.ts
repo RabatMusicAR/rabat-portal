@@ -102,7 +102,8 @@ export async function POST(req: NextRequest) {
     const errText = await put.text();
     throw new Error(`Drive rechazó el chunk: ${put.status} — ${errText}`);
   } catch (err) {
-    console.error('[drive/upload-chunk]', err);
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[drive/upload-chunk]', msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

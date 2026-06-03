@@ -36,7 +36,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ releaseFolderId, tracksFolderId });
   } catch (err) {
-    console.error('[drive/create-folder]', err);
-    return NextResponse.json({ error: 'Error al crear carpetas en Drive' }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[drive/create-folder]', msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
