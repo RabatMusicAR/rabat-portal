@@ -139,9 +139,10 @@ async function uploadFileToDrive(
       throw new Error(error ?? `Error en chunk ${i + 1} de ${totalChunks}`);
     }
 
-    const data = await res.json() as { sessionUrl?: string; fileId?: string };
-    if (data.fileId) return data.fileId;         // upload completo
-    if (data.sessionUrl) sessionUrl = data.sessionUrl; // más chunks por enviar
+    const data = await res.json().catch(() => null) as { sessionUrl?: string; fileId?: string } | null;
+    if (!data) throw new Error('Respuesta inválida del servidor al subir archivo');
+    if (data.fileId) return data.fileId;
+    if (data.sessionUrl) sessionUrl = data.sessionUrl;
   }
 
   throw new Error('Upload completado pero Drive no devolvió el ID del archivo');
@@ -282,8 +283,11 @@ function WizardPageInner() {
           releaseId: rid,
         }),
       });
-      if (!folderRes.ok) throw new Error('Error al crear carpetas');
-      const { releaseFolderId, tracksFolderId } = await folderRes.json();
+      const folderData = await folderRes.json().catch(() => null);
+      if (!folderRes.ok || !folderData) {
+        throw new Error(folderData?.error ?? `Error al crear carpetas en Drive (HTTP ${folderRes.status})`);
+      }
+      const { releaseFolderId, tracksFolderId } = folderData;
 
       // 2. Subir portada — solo variable local, no actualiza estado
       let coverDriveId = '';
@@ -351,9 +355,9 @@ function WizardPageInner() {
           splits: splitsForSheet,
         }),
       });
-      if (!submitRes.ok) {
-        const { error } = await submitRes.json();
-        throw new Error(error ?? 'Error al guardar');
+      const submitData = await submitRes.json().catch(() => null);
+      if (!submitRes.ok || !submitData) {
+        throw new Error(submitData?.error ?? `Error al guardar en Sheets (HTTP ${submitRes.status})`);
       }
 
       // 5. Solo aquí, con todo confirmado, limpiamos localStorage y mostramos éxito
