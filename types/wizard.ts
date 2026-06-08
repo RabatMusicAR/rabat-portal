@@ -8,7 +8,8 @@ export type ReleaseDateMode = 'asap' | 'specific';
 export interface CreditDraft {
   id: string;
   credit_type: CreditType;
-  role: string;
+  // Una misma persona puede acreditarse con varios roles a la vez
+  roles: string[];
   first_name: string;
   last_name: string;
   apple_music_url: string;

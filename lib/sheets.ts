@@ -115,7 +115,7 @@ export async function writeSubmission(payload: SubmitPayload): Promise<void> {
       c.id,
       t.id,
       c.credit_type,
-      c.role,
+      (c.roles ?? []).join(', '),
       c.first_name,
       c.last_name,
       c.apple_music_url,

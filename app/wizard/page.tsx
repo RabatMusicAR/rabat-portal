@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { v4 as uuidv4 } from 'uuid';
 import { GENRES } from '@/lib/constants/genres';
 import { STORES } from '@/lib/constants/stores';
+import SearchableSelect from '@/components/ui/SearchableSelect';
 import type {
   TrackDraft,
   CreditDraft,
@@ -73,6 +74,15 @@ function emptyTrack(): TrackDraft {
 
 function defaultSplit(): SplitDraft {
   return { id: uuidv4(), recipient_name: 'RABAT Music', percentage: 100 };
+}
+
+type UploadStatus = 'idle' | 'uploading' | 'done' | 'error';
+
+/** Nombre de archivo estable para el máster de una pista en Drive. */
+function audioFilename(track: TrackDraft, file: File): string {
+  const safe = track.title.replace(/[/\\?%*:|"<>]/g, '-').trim() || 'pista';
+  const ext = file.name.split('.').pop() ?? 'wav';
+  return `${safe}__${track.id.slice(0, 6)}.${ext}`;
 }
 
 // ── Helpers de upload ─────────────────────────────────────────────────────────
@@ -188,6 +198,31 @@ function WizardPageInner() {
   const coverFileRef = useRef<File | null>(null);
   const audioFilesRef = useRef<Record<string, File>>({});
 
+  // ── Subida en background ──────────────────────────────────────────────────
+  // El release_id se fija una sola vez (estable) para nombrar carpetas y filas.
+  const releaseIdRef = useRef<string>('');
+  // Carpetas de Drive creadas perezosamente la primera vez que se sube un archivo.
+  const foldersRef = useRef<{ releaseFolderId: string; tracksFolderId: string } | null>(null);
+  const foldersPromiseRef = useRef<Promise<{ releaseFolderId: string; tracksFolderId: string }> | null>(null);
+  // Drive IDs ya subidos: fuente de verdad para el envío (siempre frescos, sin staleness).
+  const coverDriveIdRef = useRef<string>('');
+  const audioDriveIdsRef = useRef<Record<string, string>>({});
+  // Promesas de subida en vuelo, para esperarlas al enviar.
+  const coverPromiseRef = useRef<Promise<void> | null>(null);
+  const audioPromisesRef = useRef<Record<string, Promise<void>>>({});
+  // Tokens para ignorar subidas obsoletas si se reemplaza un archivo.
+  const coverTokenRef = useRef(0);
+  const audioTokensRef = useRef<Record<string, number>>({});
+  // Progreso por archivo para el overlay de envío (clave: 'cover' | trackId).
+  const progressMapRef = useRef<Record<string, number>>({});
+  // Espejo de tracks para leer el título actual al nombrar el archivo en Drive.
+  const tracksRef = useRef<TrackDraft[]>([]);
+
+  const [coverStatus, setCoverStatus] = useState<UploadStatus>('idle');
+  const [coverProgress, setCoverProgress] = useState(0);
+  const [audioStatus, setAudioStatus] = useState<Record<string, UploadStatus>>({});
+  const [audioProgress, setAudioProgress] = useState<Record<string, number>>({});
+
   // Track modal
   const [modalTrackId, setModalTrackId] = useState<string | null>(null);
   const [modalStep, setModalStep] = useState(1);
@@ -203,6 +238,11 @@ function WizardPageInner() {
   useEffect(() => {
     localStorage.removeItem('rabat_wizard');
   }, []);
+
+  // Mantener el espejo de tracks al día para nombrar archivos en background.
+  useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
 
   // ── Helpers de estado ───────────────────────────────────────────────────────
 
@@ -227,6 +267,12 @@ function WizardPageInner() {
   const removeTrack = useCallback((id: string) => {
     setTracks((prev) => prev.filter((t) => t.id !== id));
     delete audioFilesRef.current[id];
+    delete audioDriveIdsRef.current[id];
+    delete audioPromisesRef.current[id];
+    delete audioTokensRef.current[id];
+    delete progressMapRef.current[id];
+    setAudioStatus((s) => { const n = { ...s }; delete n[id]; return n; });
+    setAudioProgress((s) => { const n = { ...s }; delete n[id]; return n; });
   }, []);
 
   const openModal = useCallback((id: string) => {
@@ -243,102 +289,175 @@ function WizardPageInner() {
   const totalSplit = splits.reduce((s, r) => s + r.percentage, 0);
   const splitOk = Math.abs(totalSplit - 100) < 0.01;
 
+  // ── Subida en background ──────────────────────────────────────────────────
+
+  /** Crea las carpetas de Drive una sola vez. Dedupe de llamadas concurrentes. */
+  const ensureFolders = useCallback(async () => {
+    if (foldersRef.current) return foldersRef.current;
+    if (foldersPromiseRef.current) return foldersPromiseRef.current;
+    const p = (async () => {
+      if (!releaseIdRef.current) releaseIdRef.current = makeId(release.title || 'release');
+      const res = await fetch('/api/drive/create-folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          artistEmail,
+          artistName: release.artist_name || artistEmail.split('@')[0],
+          releaseTitle: release.title || 'release',
+          releaseId: releaseIdRef.current,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) {
+        throw new Error(data?.error ?? `Error al crear carpetas en Drive (HTTP ${res.status})`);
+      }
+      foldersRef.current = { releaseFolderId: data.releaseFolderId, tracksFolderId: data.tracksFolderId };
+      return foldersRef.current;
+    })();
+    foldersPromiseRef.current = p;
+    try {
+      return await p;
+    } catch (err) {
+      foldersPromiseRef.current = null; // permitir reintento en el siguiente intento
+      throw err;
+    }
+  }, [release.title, release.artist_name, artistEmail]);
+
+  /** Inicia (o reinicia, si se reemplaza) la subida en background de la portada. */
+  const startCoverUpload = useCallback((file: File) => {
+    const token = ++coverTokenRef.current;
+    coverDriveIdRef.current = '';
+    progressMapRef.current['cover'] = 0;
+    setCoverStatus('uploading');
+    setCoverProgress(0);
+    const p = (async () => {
+      const { releaseFolderId } = await ensureFolders();
+      const ext = file.name.split('.').pop() ?? 'jpg';
+      const id = await uploadFileToDrive(file, releaseFolderId, `cover.${ext}`, (pct) => {
+        if (coverTokenRef.current !== token) return;
+        progressMapRef.current['cover'] = pct;
+        setCoverProgress(pct);
+      });
+      if (coverTokenRef.current !== token) return; // reemplazada mientras subía → ignorar
+      coverDriveIdRef.current = id;
+      progressMapRef.current['cover'] = 100;
+      setRelease((prev) => ({ ...prev, cover_drive_id: id }));
+      setCoverProgress(100);
+      setCoverStatus('done');
+    })();
+    coverPromiseRef.current = p;
+    p.catch((err) => {
+      if (coverTokenRef.current === token) {
+        console.error('[cover upload]', err);
+        setCoverStatus('error');
+      }
+    });
+  }, [ensureFolders]);
+
+  /** Inicia (o reinicia) la subida en background del máster de una pista. */
+  const startAudioUpload = useCallback((trackId: string, file: File) => {
+    const token = (audioTokensRef.current[trackId] ?? 0) + 1;
+    audioTokensRef.current[trackId] = token;
+    delete audioDriveIdsRef.current[trackId];
+    progressMapRef.current[trackId] = 0;
+    setAudioStatus((s) => ({ ...s, [trackId]: 'uploading' }));
+    setAudioProgress((s) => ({ ...s, [trackId]: 0 }));
+    const p = (async () => {
+      const { tracksFolderId } = await ensureFolders();
+      const track = tracksRef.current.find((t) => t.id === trackId);
+      const ext = file.name.split('.').pop() ?? 'wav';
+      const name = track ? audioFilename(track, file) : `pista__${trackId.slice(0, 6)}.${ext}`;
+      const id = await uploadFileToDrive(file, tracksFolderId, name, (pct) => {
+        if (audioTokensRef.current[trackId] !== token) return;
+        progressMapRef.current[trackId] = pct;
+        setAudioProgress((s) => ({ ...s, [trackId]: pct }));
+      });
+      if (audioTokensRef.current[trackId] !== token) return; // reemplazado → ignorar
+      audioDriveIdsRef.current[trackId] = id;
+      progressMapRef.current[trackId] = 100;
+      setTracks((prev) => prev.map((t) => (t.id === trackId ? { ...t, audio_drive_id: id } : t)));
+      setAudioProgress((s) => ({ ...s, [trackId]: 100 }));
+      setAudioStatus((s) => ({ ...s, [trackId]: 'done' }));
+    })();
+    audioPromisesRef.current[trackId] = p;
+    p.catch((err) => {
+      if (audioTokensRef.current[trackId] === token) {
+        console.error('[audio upload]', err);
+        setAudioStatus((s) => ({ ...s, [trackId]: 'error' }));
+      }
+    });
+  }, [ensureFolders]);
+
   // ── Envío ───────────────────────────────────────────────────────────────────
 
   const handleSubmit = async () => {
     if (!splitOk || !termsAccepted) return;
 
     setSubmitting(true);
-    // IDs legibles para el Sheet: {slug-del-nombre}-{6chars}
-    const rid = makeId(release.title);
+    // ID estable: ya fijado si hubo subidas en background; si no, se genera ahora.
+    const rid = releaseIdRef.current || makeId(release.title);
+    releaseIdRef.current = rid;
     setReleaseId(rid);
 
+    // El overlay refleja el progreso real leyendo del progressMapRef, que alimentan
+    // tanto las subidas en background como los reintentos de abajo.
+    const totalFiles =
+      (coverFileRef.current ? 1 : 0) +
+      tracks.filter((t) => audioFilesRef.current[t.id]).length;
+    const progTimer = setInterval(() => {
+      const vals = Object.values(progressMapRef.current);
+      if (!vals.length || totalFiles === 0) return;
+      const avg = vals.reduce((a, b) => a + b, 0) / totalFiles;
+      setSubmitProgress(Math.min(10 + Math.round(avg * 0.75), 85)); // 10 → 85%
+    }, 200);
+
     try {
-      // 1. Crear carpetas en Drive
-      setSubmitStep('Creando carpetas en Drive…');
-      setSubmitProgress(5);
-
-      const folderRes = await fetch('/api/drive/create-folder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          artistEmail,
-          artistName: release.artist_name || artistEmail.split('@')[0],
-          releaseTitle: release.title,
-          releaseId: rid,
-        }),
-      });
-      const folderData = await folderRes.json().catch(() => null);
-      if (!folderRes.ok || !folderData) {
-        throw new Error(folderData?.error ?? `Error al crear carpetas en Drive (HTTP ${folderRes.status})`);
-      }
-      const { releaseFolderId, tracksFolderId } = folderData;
-
-      // 2 & 3. Subir portada y todos los audios EN PARALELO
-      let coverDriveId = '';
-      // Tiempo total = el archivo más grande (no la suma de todos)
       setSubmitStep('Subiendo archivos a Drive…');
       setSubmitProgress(10);
 
-      const localTracks = tracks.map((t) => ({ ...t }));
+      // Carpetas: normalmente ya creadas durante las subidas en background.
+      await ensureFolders();
 
-      // Progreso por archivo: promedio ponderado de todos los uploads activos
-      const progressMap: Record<string, number> = {};
-      const totalFiles =
-        (coverFileRef.current ? 1 : 0) +
-        localTracks.filter((t) => audioFilesRef.current[t.id]).length;
+      // 1. Esperar a que terminen las subidas en background que sigan en vuelo.
+      const inflight: Promise<unknown>[] = [];
+      if (coverPromiseRef.current) inflight.push(coverPromiseRef.current.catch(() => {}));
+      for (const p of Object.values(audioPromisesRef.current)) inflight.push(p.catch(() => {}));
+      await Promise.all(inflight);
 
-      const updateCombinedProgress = () => {
-        const values = Object.values(progressMap);
-        if (!values.length) return;
-        const avg = values.reduce((a, b) => a + b, 0) / totalFiles;
-        setSubmitProgress(10 + Math.round(avg * 0.75)); // 10 → 85%
-      };
-
-      // Construir las promesas de upload en paralelo
-      const uploadPromises: Promise<void>[] = [];
-
-      if (coverFileRef.current) {
+      // 2. Reintentar la portada si no llegó a subirse (o falló) en background.
+      let coverDriveId = coverDriveIdRef.current;
+      if (!coverDriveId && coverFileRef.current) {
+        const { releaseFolderId } = await ensureFolders();
         const ext = coverFileRef.current.name.split('.').pop() ?? 'jpg';
-        progressMap['cover'] = 0;
-        uploadPromises.push(
-          uploadFileToDrive(
-            coverFileRef.current,
-            releaseFolderId,
-            `cover.${ext}`,
-            (pct) => { progressMap['cover'] = pct; updateCombinedProgress(); },
-          ).then((id) => { coverDriveId = id; progressMap['cover'] = 100; }),
+        coverDriveId = await uploadFileToDrive(
+          coverFileRef.current, releaseFolderId, `cover.${ext}`,
+          (pct) => { progressMapRef.current['cover'] = pct; },
         );
+        coverDriveIdRef.current = coverDriveId;
       }
 
+      // 3. Reintentar los másters que falten y construir las pistas finales.
+      const { tracksFolderId } = await ensureFolders();
+      const localTracks = tracks.map((t) => ({ ...t }));
       for (let i = 0; i < localTracks.length; i++) {
-        const track = localTracks[i];
-        const file = audioFilesRef.current[track.id];
-        if (file) {
-          const key = `audio_${i}`;
-          progressMap[key] = 0;
-          const safeTitle = track.title.replace(/[/\\?%*:|"<>]/g, '-') || `track-${i + 1}`;
-          const ext = file.name.split('.').pop() ?? 'wav';
-          const idx = i; // capturar para el closure
-          uploadPromises.push(
-            uploadFileToDrive(
-              file,
-              tracksFolderId,
-              `${String(i + 1).padStart(2, '0')}_${safeTitle}.${ext}`,
-              (pct) => { progressMap[key] = pct; updateCombinedProgress(); },
-            ).then((id) => {
-              localTracks[idx] = { ...localTracks[idx], audio_drive_id: id };
-              progressMap[key] = 100;
-            }),
+        const t = localTracks[i];
+        const file = audioFilesRef.current[t.id];
+        let driveId = audioDriveIdsRef.current[t.id];
+        if (!driveId && file) {
+          driveId = await uploadFileToDrive(
+            file, tracksFolderId, audioFilename(t, file),
+            (pct) => { progressMapRef.current[t.id] = pct; },
           );
+          audioDriveIdsRef.current[t.id] = driveId;
         }
+        localTracks[i] = { ...t, audio_drive_id: driveId ?? t.audio_drive_id ?? '' };
       }
 
-      await Promise.all(uploadPromises);
+      clearInterval(progTimer);
 
       // 4. Guardar en Sheets
       setSubmitStep('Guardando en el sistema de RABAT…');
-      setSubmitProgress(85);
+      setSubmitProgress(88);
 
       const tracksForSheet = localTracks.map((t, i) => ({
         ...t,
@@ -377,6 +496,7 @@ function WizardPageInner() {
       setSubmitProgress(100);
       setSubmitted(true);
     } catch (err) {
+      clearInterval(progTimer);
       console.error(err);
       // No actualizamos estado → el formulario queda intacto para reintentar
       setSubmitting(false);
@@ -529,29 +649,21 @@ function WizardPageInner() {
                 <div className="field-grid">
                   <div className="field">
                     <label className="field-label">género</label>
-                    <select
-                      className="input-pill"
+                    <SearchableSelect
+                      options={GENRES}
                       value={release.genre}
-                      onChange={(e) => updateRelease('genre', e.target.value)}
-                    >
-                      <option value="" disabled>elige uno…</option>
-                      {GENRES.map((g) => (
-                        <option key={g} value={g}>{g}</option>
-                      ))}
-                    </select>
+                      onChange={(v) => updateRelease('genre', v)}
+                      placeholder="elige uno…"
+                    />
                   </div>
                   <div className="field">
                     <label className="field-label">idioma del título</label>
-                    <select
-                      className="input-pill"
+                    <SearchableSelect
+                      options={['Español', 'English', 'Português', 'Français', 'Italiano', 'Deutsch', 'Instrumental / sin idioma']}
                       value={release.title_language}
-                      onChange={(e) => updateRelease('title_language', e.target.value)}
-                    >
-                      <option value="" disabled>elige uno…</option>
-                      {['Español', 'English', 'Português', 'Français', 'Italiano', 'Deutsch', 'Instrumental / sin idioma'].map((l) => (
-                        <option key={l} value={l}>{l}</option>
-                      ))}
-                    </select>
+                      onChange={(v) => updateRelease('title_language', v)}
+                      placeholder="elige uno…"
+                    />
                   </div>
                 </div>
               </div>
@@ -633,9 +745,12 @@ function WizardPageInner() {
                     if (!file) return;
                     coverFileRef.current = file;
                     updateRelease('cover_filename', file.name);
+                    updateRelease('cover_drive_id', '');
                     const reader = new FileReader();
                     reader.onload = (ev) => updateRelease('cover_preview', ev.target?.result as string);
                     reader.readAsDataURL(file);
+                    // Subida en background: empieza ya, sin esperar al envío.
+                    startCoverUpload(file);
                   }}
                 />
                 {release.cover_preview ? (
@@ -667,8 +782,11 @@ function WizardPageInner() {
                   › si no cumple, las tiendas la rechazan y bloquea el lanzamiento entero.
                 </div>
                 {release.cover_filename && (
-                  <p style={{ marginTop: 16, fontSize: 12, color: 'var(--yellow)' }}>
-                    ✓ {release.cover_filename}
+                  <p style={{ marginTop: 16, fontSize: 12, color: coverStatus === 'error' ? '#ff6b6b' : 'var(--yellow)' }}>
+                    {coverStatus === 'uploading' && `↑ subiendo portada… ${coverProgress}%`}
+                    {coverStatus === 'done' && `✓ ${release.cover_filename} · subida a Drive`}
+                    {coverStatus === 'error' && '✕ error al subir — vuelve a seleccionar la portada'}
+                    {coverStatus === 'idle' && `✓ ${release.cover_filename}`}
                   </p>
                 )}
               </div>
@@ -996,7 +1114,9 @@ function WizardPageInner() {
           modalStep={modalStep}
           onStepChange={setModalStep}
           onUpdate={(patch) => updateTrack(modalTrackId, patch)}
-          onAudioFile={(file) => { audioFilesRef.current[modalTrackId] = file; }}
+          onAudioFile={(file) => { audioFilesRef.current[modalTrackId] = file; startAudioUpload(modalTrackId, file); }}
+          audioStatus={audioStatus[modalTrackId] ?? 'idle'}
+          audioProgress={audioProgress[modalTrackId] ?? 0}
           onFinalize={() => {
             updateTrack(modalTrackId, { completed_steps: 4 });
             closeModal();
@@ -1017,6 +1137,8 @@ interface TrackModalProps {
   onStepChange: (n: number) => void;
   onUpdate: (patch: Partial<TrackDraft>) => void;
   onAudioFile: (file: File) => void;
+  audioStatus: UploadStatus;
+  audioProgress: number;
   onFinalize: () => void;
   onClose: () => void;
 }
@@ -1028,12 +1150,14 @@ function TrackModal({
   onStepChange,
   onUpdate,
   onAudioFile,
+  audioStatus,
+  audioProgress,
   onFinalize,
   onClose,
 }: TrackModalProps) {
-  type FormFields = { role: string; first_name: string; last_name: string; apple_music_url: string; spotify_url: string };
+  type FormFields = { roles: string[]; first_name: string; last_name: string; apple_music_url: string; spotify_url: string };
   type FormState = FormFields & { open: boolean };
-  const EMPTY_FIELDS: FormFields = { role: '', first_name: '', last_name: '', apple_music_url: '', spotify_url: '' };
+  const EMPTY_FIELDS: FormFields = { roles: [], first_name: '', last_name: '', apple_music_url: '', spotify_url: '' };
 
   // Cada tipo tiene su propio formulario independiente; todos abiertos al inicio (sin créditos aún)
   const [forms, setForms] = useState<Record<CreditType, FormState>>({
@@ -1049,22 +1173,22 @@ function TrackModal({
 
   const addCredit = (type: CreditType) => {
     const f = forms[type];
-    if (!f.role || !f.first_name || !f.last_name) {
-      alert('Completa rol, nombre y apellido.');
+    if (f.roles.length === 0 || !f.first_name || !f.last_name) {
+      alert('Selecciona al menos un rol e indica nombre y apellido.');
       return;
     }
-    if (type === 'production' && f.role === 'Productor' && (!f.apple_music_url || !f.spotify_url)) {
+    if (type === 'production' && f.roles.includes('Productor') && (!f.apple_music_url || !f.spotify_url)) {
       alert('El rol Productor requiere los enlaces de Apple Music y Spotify.');
       return;
     }
     const newCredit: CreditDraft = {
-      id: uuidv4(), credit_type: type, role: f.role,
+      id: uuidv4(), credit_type: type, roles: f.roles,
       first_name: f.first_name, last_name: f.last_name,
       apple_music_url: f.apple_music_url, spotify_url: f.spotify_url,
     };
     onUpdate({ credits: [...track.credits, newCredit] });
     // Cerrar formulario tras agregar; el usuario puede reabrir con "+ añadir"
-    setForms((prev) => ({ ...prev, [type]: { open: false, ...EMPTY_FIELDS } }));
+    setForms((prev) => ({ ...prev, [type]: { open: false, ...EMPTY_FIELDS, roles: [] } }));
   };
 
   const cancelForm = (type: CreditType) => {
@@ -1308,7 +1432,12 @@ function TrackModal({
                   {track.audio_filename ? (
                     <>
                       <span>{track.audio_filename}</span>
-                      <span className="au-meta">listo para subir</span>
+                      <span className="au-meta">
+                        {audioStatus === 'uploading' && `subiendo… ${audioProgress}%`}
+                        {audioStatus === 'done' && 'subido ✓'}
+                        {audioStatus === 'error' && 'error — vuelve a seleccionar'}
+                        {audioStatus === 'idle' && 'listo para subir'}
+                      </span>
                     </>
                   ) : (
                     <span>+ AÑADIR AUDIO</span>
@@ -1429,9 +1558,9 @@ function TrackModal({
               const meta: Record<CreditType, { title: string; help: string; noun: string; roles: string[] }> = {
                 performer: {
                   title: 'créditos de interpretación',
-                  help: 'Obligatorio: al menos un intérprete. Una persona puede tener más de un rol — añade un crédito por cada uno.',
+                  help: 'Obligatorio: al menos un intérprete. Una persona puede tener varios roles — selecciónalos todos en el mismo crédito.',
                   noun: 'intérprete',
-                  roles: ['Acordeón','Voces de fondo','Banjo','Bajo','Fagot','Campanas','Violoncelo','Clarinete','Batería','Violín "fiddle"','Flauta','Guitarra','Armónica','Arpa','Trompa','Teclados','Laúd','Metalófono','Artista mezclado','Oboe','Órgano','Percusión','Piano','Programación (DAW)','Rap','Flauta dulce','Artista sampleado','Saxofón','Sintetizador','Pandereta','Trombón','Trompeta','Viola','Viola de gamba','Violín','Vocales','Silbido','Xilófono'],
+                  roles: ['Voz principal','Vocales','Voces de fondo','Coros','Rap','Acordeón','Banjo','Bajo','Fagot','Campanas','Violoncelo','Clarinete','Batería','Violín "fiddle"','Flauta','Guitarra','Armónica','Arpa','Trompa','Teclados','Laúd','Metalófono','Artista mezclado','Oboe','Órgano','Percusión','Piano','Programación (DAW)','Flauta dulce','Artista sampleado','Saxofón','Sintetizador','Pandereta','Trombón','Trompeta','Viola','Viola de gamba','Violín','Silbido','Xilófono'],
                 },
                 author: {
                   title: 'créditos de autoría',
@@ -1472,8 +1601,8 @@ function TrackModal({
                           <div className="ci-avatar">{c.first_name[0]?.toUpperCase() ?? '?'}</div>
                           <div className="ci-main">
                             <div className="ci-name">{c.first_name} {c.last_name}</div>
-                            <div className="ci-role">{c.role}</div>
-                            {c.role === 'Productor' && (c.apple_music_url || c.spotify_url) && (
+                            <div className="ci-role">{c.roles.join(' · ')}</div>
+                            {c.roles.includes('Productor') && (c.apple_music_url || c.spotify_url) && (
                               <div className="ci-extra">
                                 {c.apple_music_url && <a href={c.apple_music_url} target="_blank" rel="noreferrer">apple music</a>}
                                 {c.apple_music_url && c.spotify_url && ' · '}
@@ -1495,15 +1624,14 @@ function TrackModal({
                         {!hasMin && <span style={{ color: 'var(--yellow)', fontSize: 11, marginLeft: 8 }}>obligatorio</span>}
                       </div>
                       <div className="field">
-                        <label className="field-label">rol</label>
-                        <select
-                          className="input-pill"
-                          value={f.role}
-                          onChange={(e) => updateForm(type, { role: e.target.value })}
-                        >
-                          <option value="" disabled>elige un rol…</option>
-                          {meta[type].roles.map((r) => <option key={r} value={r}>{r}</option>)}
-                        </select>
+                        <label className="field-label">rol(es) — puedes elegir varios</label>
+                        <SearchableSelect
+                          multiple
+                          options={meta[type].roles}
+                          values={f.roles}
+                          onChange={(vals) => updateForm(type, { roles: vals })}
+                          placeholder="elige uno o varios…"
+                        />
                       </div>
                       <div className="field-grid">
                         <div className="field">
@@ -1517,7 +1645,7 @@ function TrackModal({
                             onChange={(e) => updateForm(type, { last_name: e.target.value })} />
                         </div>
                       </div>
-                      {type === 'production' && f.role === 'Productor' && (
+                      {type === 'production' && f.roles.includes('Productor') && (
                         <div className="producer-fields show">
                           <div className="pf-eyebrow">› solo para rol = productor: ambos enlaces obligatorios</div>
                           <div className="field">
