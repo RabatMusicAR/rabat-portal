@@ -67,6 +67,7 @@ function emptyTrack(): TrackDraft {
     youtube_content_id: false,
     tiktok_preview_start: false,
     tiktok_preview_seconds: 0,
+    release_time: '',
     credits: [],
     completed_steps: 0,
   };
@@ -1111,6 +1112,7 @@ function WizardPageInner() {
         <TrackModal
           track={currentTrack}
           trackNumber={tracks.findIndex((t) => t.id === modalTrackId) + 1}
+          primaryArtistName={release.artist_name}
           modalStep={modalStep}
           onStepChange={setModalStep}
           onUpdate={(patch) => updateTrack(modalTrackId, patch)}
@@ -1130,9 +1132,63 @@ function WizardPageInner() {
 
 // ── TrackModal ────────────────────────────────────────────────────────────────
 
+// Metadatos de cada bloque de créditos. A nivel de módulo para que addCredit y el
+// render compartan las mismas reglas (required, links, apellido obligatorio…).
+type CreditTypeMeta = {
+  title: string;
+  help: string;
+  noun: string;
+  roles: string[];
+  required: boolean;                       // bloquea "FINALIZAR" si falta
+  links: 'none' | 'optional' | 'productor';
+  lastNameRequired: boolean;
+};
+
+const CREDIT_ORDER: CreditType[] = ['artist', 'performer', 'author', 'production'];
+
+const CREDIT_META: Record<CreditType, CreditTypeMeta> = {
+  artist: {
+    title: 'artistas (principal / feat.)',
+    help: 'Añade artistas principales adicionales o invitados (feat.) de esta pista. Para cada uno puedes poner sus enlaces de Spotify y Apple Music (opcional).',
+    noun: 'artista',
+    roles: ['Artista principal', 'Artista invitado (feat.)'],
+    required: false,
+    links: 'optional',
+    lastNameRequired: false,
+  },
+  performer: {
+    title: 'créditos de interpretación',
+    help: 'Obligatorio: al menos un intérprete. Una persona puede tener varios roles — selecciónalos todos en el mismo crédito.',
+    noun: 'intérprete',
+    roles: ['Voz principal','Vocales','Voces de fondo','Coros','Rap','Acordeón','Banjo','Bajo','Fagot','Campanas','Violoncelo','Clarinete','Batería','Violín "fiddle"','Flauta','Guitarra','Armónica','Arpa','Trompa','Teclados','Laúd','Metalófono','Artista mezclado','Oboe','Órgano','Percusión','Piano','Programación (DAW)','Flauta dulce','Artista sampleado','Saxofón','Sintetizador','Pandereta','Trombón','Trompeta','Viola','Viola de gamba','Violín','Silbido','Xilófono'],
+    required: true,
+    links: 'none',
+    lastNameRequired: true,
+  },
+  author: {
+    title: 'créditos de autoría',
+    help: 'Obligatorio: al menos un compositor. Si es un cover, acredita a los autores originales.',
+    noun: 'autor',
+    roles: ['Compositor','Letrista','Adaptador','Arreglista'],
+    required: true,
+    links: 'none',
+    lastNameRequired: true,
+  },
+  production: {
+    title: 'créditos de producción',
+    help: 'Obligatorio: al menos un colaborador técnico. El rol Productor requiere enlaces de Apple Music y Spotify.',
+    noun: 'colaborador',
+    roles: ['Productor','Co-productor','Ingeniero de mezcla','Ingeniero de masterización','Ingeniero de grabación','Ingeniero','Ingeniero asistente','Diseño gráfico'],
+    required: true,
+    links: 'productor',
+    lastNameRequired: true,
+  },
+};
+
 interface TrackModalProps {
   track: TrackDraft;
   trackNumber: number;
+  primaryArtistName: string;
   modalStep: number;
   onStepChange: (n: number) => void;
   onUpdate: (patch: Partial<TrackDraft>) => void;
@@ -1146,6 +1202,7 @@ interface TrackModalProps {
 function TrackModal({
   track,
   trackNumber,
+  primaryArtistName,
   modalStep,
   onStepChange,
   onUpdate,
@@ -1159,8 +1216,10 @@ function TrackModal({
   type FormState = FormFields & { open: boolean };
   const EMPTY_FIELDS: FormFields = { roles: [], first_name: '', last_name: '', apple_music_url: '', spotify_url: '' };
 
-  // Cada tipo tiene su propio formulario independiente; todos abiertos al inicio (sin créditos aún)
+  // Cada tipo tiene su propio formulario independiente. Los obligatorios arrancan
+  // abiertos (sin créditos aún); el de artistas (opcional) arranca cerrado.
   const [forms, setForms] = useState<Record<CreditType, FormState>>({
+    artist:    { open: false, ...EMPTY_FIELDS },
     performer: { open: true, ...EMPTY_FIELDS },
     author:    { open: true, ...EMPTY_FIELDS },
     production:{ open: true, ...EMPTY_FIELDS },
@@ -1173,11 +1232,14 @@ function TrackModal({
 
   const addCredit = (type: CreditType) => {
     const f = forms[type];
-    if (f.roles.length === 0 || !f.first_name || !f.last_name) {
-      alert('Selecciona al menos un rol e indica nombre y apellido.');
+    const m = CREDIT_META[type];
+    if (f.roles.length === 0 || !f.first_name || (m.lastNameRequired && !f.last_name)) {
+      alert(m.lastNameRequired
+        ? 'Selecciona al menos un rol e indica nombre y apellido.'
+        : 'Selecciona al menos un rol e indica el nombre.');
       return;
     }
-    if (type === 'production' && f.roles.includes('Productor') && (!f.apple_music_url || !f.spotify_url)) {
+    if (m.links === 'productor' && f.roles.includes('Productor') && (!f.apple_music_url || !f.spotify_url)) {
       alert('El rol Productor requiere los enlaces de Apple Music y Spotify.');
       return;
     }
@@ -1192,29 +1254,33 @@ function TrackModal({
   };
 
   const cancelForm = (type: CreditType) => {
-    // Solo se puede cerrar si ya existe al menos 1 crédito de ese tipo
-    if (track.credits.some((c) => c.credit_type === type)) {
-      setForms((prev) => ({ ...prev, [type]: { open: false, ...EMPTY_FIELDS } }));
+    // Los tipos opcionales (artistas) siempre pueden cerrarse; los obligatorios solo
+    // si ya tienen al menos 1 crédito.
+    if (!CREDIT_META[type].required || track.credits.some((c) => c.credit_type === type)) {
+      setForms((prev) => ({ ...prev, [type]: { open: false, ...EMPTY_FIELDS, roles: [] } }));
     }
   };
 
   const removeCredit = (id: string) => {
     const removed = track.credits.find((c) => c.id === id);
     const remaining = track.credits.filter((c) => c.id !== id);
-    // Si se elimina el último de un tipo, reabrir el formulario de ese tipo
-    if (removed && !remaining.some((c) => c.credit_type === removed.credit_type)) {
-      setForms((prev) => ({ ...prev, [removed.credit_type]: { open: true, ...EMPTY_FIELDS } }));
+    // Si se elimina el último de un tipo OBLIGATORIO, reabrir su formulario.
+    if (removed && CREDIT_META[removed.credit_type].required && !remaining.some((c) => c.credit_type === removed.credit_type)) {
+      setForms((prev) => ({ ...prev, [removed.credit_type]: { open: true, ...EMPTY_FIELDS, roles: [] } }));
     }
     onUpdate({ credits: remaining });
   };
 
-  // Habilita "FINALIZAR" solo cuando los 3 tipos tienen ≥1 crédito y no hay formularios con datos a medias
-  const creditsComplete = (['performer', 'author', 'production'] as const).every(
+  // "FINALIZAR" solo requiere los tipos obligatorios (los artistas feat./extra son opcionales).
+  const creditsComplete = CREDIT_ORDER.filter((t) => CREDIT_META[t].required).every(
     (type) => track.credits.some((c) => c.credit_type === type),
   );
 
+  // El backdrop NO cierra al hacer clic: en formularios largos es muy fácil tocar
+  // el fondo negro sin querer y perder el sitio. Se cierra solo con la ✕ o los
+  // botones; al tocar fuera de un desplegable solo se cierra ese desplegable.
   return (
-    <div className="modal-backdrop open" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop open">
       <div className="modal-panel">
         <div className="modal-header">
           <div className="modal-title-block">
@@ -1504,23 +1570,71 @@ function TrackModal({
                 >
                   <div className="cb" />
                   <div className="cb-text">
-                    <strong>especificar segundo de preview</strong>
-                    <span>en qué segundo empezará la vista previa en TikTok</span>
+                    <strong>especificar minuto y segundo de inicio</strong>
+                    <span>marca en qué momento empezará la vista previa en TikTok (formato 0:00)</span>
                   </div>
                 </div>
                 {track.tiktok_preview_start && (
                   <div className="field" style={{ marginTop: 14 }}>
-                    <label className="field-label">segundo de inicio</label>
-                    <input
-                      type="number"
-                      className="input-pill"
-                      min={0}
-                      placeholder="ej. 30"
-                      value={track.tiktok_preview_seconds || ''}
-                      onChange={(e) => onUpdate({ tiktok_preview_seconds: parseInt(e.target.value) || 0 })}
-                    />
+                    <label className="field-label">minuto y segundo de inicio (m:ss)</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <input
+                        type="number"
+                        className="input-pill"
+                        min={0}
+                        placeholder="0"
+                        aria-label="minutos"
+                        style={{ maxWidth: 120, textAlign: 'center' }}
+                        value={Math.floor((track.tiktok_preview_seconds || 0) / 60) || ''}
+                        onChange={(e) => {
+                          const m = Math.max(0, parseInt(e.target.value) || 0);
+                          const s = (track.tiktok_preview_seconds || 0) % 60;
+                          onUpdate({ tiktok_preview_seconds: m * 60 + s });
+                        }}
+                      />
+                      <span style={{ fontFamily: 'var(--font-display)', fontSize: 28, lineHeight: 1 }}>:</span>
+                      <input
+                        type="number"
+                        className="input-pill"
+                        min={0}
+                        max={59}
+                        placeholder="00"
+                        aria-label="segundos"
+                        style={{ maxWidth: 120, textAlign: 'center' }}
+                        value={(track.tiktok_preview_seconds || 0) % 60 || ''}
+                        onChange={(e) => {
+                          let s = Math.max(0, parseInt(e.target.value) || 0);
+                          if (s > 59) s = 59;
+                          const m = Math.floor((track.tiktok_preview_seconds || 0) / 60);
+                          onUpdate({ tiktok_preview_seconds: m * 60 + s });
+                        }}
+                      />
+                      <span style={{ fontSize: 11, color: 'var(--off-white-dim)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>min : seg</span>
+                    </div>
+                    <p className="field-block-help" style={{ marginTop: 8, marginBottom: 0 }}>
+                      ej. 0:30 → empieza a los 30 segundos · 1:05 → al minuto y 5 segundos
+                    </p>
                   </div>
                 )}
+              </div>
+
+              <div className="field-block">
+                <div className="field-block-head">
+                  <span className="field-block-tag optional">opcional</span>
+                  <div className="field-block-title">hora de salida</div>
+                </div>
+                <p className="field-block-help">
+                  A qué hora saldrá esta canción, en horario de España (CET/CEST). Si lo dejas vacío, RABAT usa la hora por defecto.
+                </p>
+                <div className="field">
+                  <label className="field-label">hora (españa · cet/cest)</label>
+                  <input
+                    type="time"
+                    className="input-pill"
+                    value={track.release_time}
+                    onChange={(e) => onUpdate({ release_time: e.target.value })}
+                  />
+                </div>
               </div>
             </div>
             <div className="wizard-nav">
@@ -1539,59 +1653,40 @@ function TrackModal({
         {/* MODAL PASO 4 — Créditos */}
         {modalStep === 4 && (
           <div>
-            {/* Artista primario */}
-            <div className="credits-section">
-              <div className="credits-head"><h3>artistas</h3></div>
-              <div className="credits-list">
-                <div className="credit-row">
-                  <div className="ci-avatar">A</div>
-                  <div className="ci-main">
-                    <div className="ci-name">artista primario</div>
-                    <div className="ci-role">artista primario</div>
-                  </div>
-                  <span />
-                </div>
-              </div>
-            </div>
-
-            {(['performer', 'author', 'production'] as const).map((type) => {
-              const meta: Record<CreditType, { title: string; help: string; noun: string; roles: string[] }> = {
-                performer: {
-                  title: 'créditos de interpretación',
-                  help: 'Obligatorio: al menos un intérprete. Una persona puede tener varios roles — selecciónalos todos en el mismo crédito.',
-                  noun: 'intérprete',
-                  roles: ['Voz principal','Vocales','Voces de fondo','Coros','Rap','Acordeón','Banjo','Bajo','Fagot','Campanas','Violoncelo','Clarinete','Batería','Violín "fiddle"','Flauta','Guitarra','Armónica','Arpa','Trompa','Teclados','Laúd','Metalófono','Artista mezclado','Oboe','Órgano','Percusión','Piano','Programación (DAW)','Flauta dulce','Artista sampleado','Saxofón','Sintetizador','Pandereta','Trombón','Trompeta','Viola','Viola de gamba','Violín','Silbido','Xilófono'],
-                },
-                author: {
-                  title: 'créditos de autoría',
-                  help: 'Obligatorio: al menos un compositor. Si es un cover, acredita a los autores originales.',
-                  noun: 'autor',
-                  roles: ['Compositor','Letrista','Adaptador','Arreglista'],
-                },
-                production: {
-                  title: 'créditos de producción',
-                  help: 'Obligatorio: al menos un colaborador técnico. El rol Productor requiere enlaces de Apple Music y Spotify.',
-                  noun: 'colaborador',
-                  roles: ['Productor','Co-productor','Ingeniero de mezcla','Ingeniero de masterización','Ingeniero de grabación','Ingeniero','Ingeniero asistente','Diseño gráfico'],
-                },
-              };
-
+            {CREDIT_ORDER.map((type) => {
+              const m = CREDIT_META[type];
               const existing = track.credits.filter((c) => c.credit_type === type);
               const f = forms[type];
               const hasMin = existing.length > 0;
+              // Enlaces Spotify/Apple: opcionales para artistas, obligatorios para Productor.
+              const wantLinks = m.links === 'optional' || (m.links === 'productor' && f.roles.includes('Productor'));
 
               return (
                 <div key={type} className="credits-section">
                   <div className="credits-head">
-                    <h3>{meta[type].title}</h3>
-                    {/* Botón "+ añadir" solo visible cuando el formulario está cerrado */}
-                    {hasMin && !f.open && (
+                    <h3>{m.title}</h3>
+                    {/* "+ añadir" cuando el form está cerrado (siempre disponible en opcionales) */}
+                    {!f.open && (hasMin || !m.required) && (
                       <button className="link-add" onClick={() => updateForm(type, { open: true })}>
-                        añadir {meta[type].noun}
+                        añadir {m.noun}
                       </button>
                     )}
                   </div>
-                  <p className="field-block-help">{meta[type].help}</p>
+                  <p className="field-block-help">{m.help}</p>
+
+                  {/* Artista principal del Paso 1 (informativo) al inicio de la sección de artistas */}
+                  {type === 'artist' && primaryArtistName && (
+                    <div className="credits-list">
+                      <div className="credit-row">
+                        <div className="ci-avatar">{primaryArtistName[0]?.toUpperCase() ?? 'A'}</div>
+                        <div className="ci-main">
+                          <div className="ci-name">{primaryArtistName}</div>
+                          <div className="ci-role">artista principal · del paso 1</div>
+                        </div>
+                        <span />
+                      </div>
+                    </div>
+                  )}
 
                   {/* Lista de créditos ya añadidos */}
                   {existing.length > 0 && (
@@ -1602,7 +1697,7 @@ function TrackModal({
                           <div className="ci-main">
                             <div className="ci-name">{c.first_name} {c.last_name}</div>
                             <div className="ci-role">{c.roles.join(' · ')}</div>
-                            {c.roles.includes('Productor') && (c.apple_music_url || c.spotify_url) && (
+                            {(c.credit_type === 'artist' || c.roles.includes('Productor')) && (c.apple_music_url || c.spotify_url) && (
                               <div className="ci-extra">
                                 {c.apple_music_url && <a href={c.apple_music_url} target="_blank" rel="noreferrer">apple music</a>}
                                 {c.apple_music_url && c.spotify_url && ' · '}
@@ -1620,14 +1715,14 @@ function TrackModal({
                   {f.open && (
                     <div className="credit-form">
                       <div className="cf-title">
-                        {hasMin ? `añadir otro ${meta[type].noun}` : `añadir ${meta[type].noun}`}
-                        {!hasMin && <span style={{ color: 'var(--yellow)', fontSize: 11, marginLeft: 8 }}>obligatorio</span>}
+                        {hasMin ? `añadir otro ${m.noun}` : `añadir ${m.noun}`}
+                        {!hasMin && m.required && <span style={{ color: 'var(--yellow)', fontSize: 11, marginLeft: 8 }}>obligatorio</span>}
                       </div>
                       <div className="field">
                         <label className="field-label">rol(es) — puedes elegir varios</label>
                         <SearchableSelect
                           multiple
-                          options={meta[type].roles}
+                          options={m.roles}
                           values={f.roles}
                           onChange={(vals) => updateForm(type, { roles: vals })}
                           placeholder="elige uno o varios…"
@@ -1635,26 +1730,30 @@ function TrackModal({
                       </div>
                       <div className="field-grid">
                         <div className="field">
-                          <label className="field-label">nombre</label>
+                          <label className="field-label">{type === 'artist' ? 'nombre / nombre artístico' : 'nombre'}</label>
                           <input type="text" className="input-pill" value={f.first_name}
                             onChange={(e) => updateForm(type, { first_name: e.target.value })} />
                         </div>
                         <div className="field">
-                          <label className="field-label">apellido</label>
+                          <label className="field-label">{m.lastNameRequired ? 'apellido' : 'apellido (opcional)'}</label>
                           <input type="text" className="input-pill" value={f.last_name}
                             onChange={(e) => updateForm(type, { last_name: e.target.value })} />
                         </div>
                       </div>
-                      {type === 'production' && f.roles.includes('Productor') && (
+                      {wantLinks && (
                         <div className="producer-fields show">
-                          <div className="pf-eyebrow">› solo para rol = productor: ambos enlaces obligatorios</div>
+                          <div className="pf-eyebrow">
+                            {m.links === 'productor'
+                              ? '› solo para rol = productor: ambos enlaces obligatorios'
+                              : '› enlaces del artista (opcional)'}
+                          </div>
                           <div className="field">
-                            <label className="field-label">apple music — página del productor</label>
+                            <label className="field-label">apple music{m.links === 'optional' ? ' (opcional)' : ' — página del productor'}</label>
                             <input type="url" className="input-pill" placeholder="https://music.apple.com/..."
                               value={f.apple_music_url} onChange={(e) => updateForm(type, { apple_music_url: e.target.value })} />
                           </div>
                           <div className="field">
-                            <label className="field-label">spotify — página del productor</label>
+                            <label className="field-label">spotify{m.links === 'optional' ? ' (opcional)' : ' — página del productor'}</label>
                             <input type="url" className="input-pill" placeholder="https://open.spotify.com/artist/..."
                               value={f.spotify_url} onChange={(e) => updateForm(type, { spotify_url: e.target.value })} />
                           </div>
@@ -1665,9 +1764,9 @@ function TrackModal({
                         <button
                           className="btn-secondary"
                           onClick={() => cancelForm(type)}
-                          disabled={!hasMin}
-                          title={!hasMin ? 'debes añadir al menos uno' : undefined}
-                          style={{ opacity: hasMin ? 1 : 0.3 }}
+                          disabled={m.required && !hasMin}
+                          title={m.required && !hasMin ? 'debes añadir al menos uno' : undefined}
+                          style={{ opacity: m.required && !hasMin ? 0.3 : 1 }}
                         >
                           cancelar
                         </button>

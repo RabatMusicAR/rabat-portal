@@ -52,10 +52,16 @@ async function appendRows(tab: string, rows: (string | number | boolean | undefi
 //
 // tracks: track_id | release_id | track_number | title | recording_year | version |
 //         isrc | has_vocals | explicit_content | has_lyrics | lyrics_text |
-//         audio_master_drive_id | origin | youtube_content_id | tiktok_preview_seconds
+//         audio_master_drive_id | origin | youtube_content_id | tiktok_preview_seconds |
+//         release_time_es   (hora de salida en horario de España, HH:MM)
 //
 // credits: credit_id | track_id | credit_type | role | first_name | last_name |
 //          apple_music_url | spotify_url
+//   credit_type ∈ { artist | performer | author | production }
+//     - artist     = artistas principales adicionales + invitados (feat.); role =
+//                    "Artista principal" / "Artista invitado (feat.)"; links opcionales
+//     - performer/author/production = créditos técnicos/creativos
+//   role puede contener VARIOS roles separados por ", " (una persona, varios roles)
 //
 // royalty_splits: split_id | release_id | recipient_name | percentage
 //
@@ -106,6 +112,7 @@ export async function writeSubmission(payload: SubmitPayload): Promise<void> {
     t.origin,
     String(t.youtube_content_id),
     t.tiktok_preview_start ? String(t.tiktok_preview_seconds) : '',
+    t.release_time,
   ]);
   if (trackRows.length > 0) await appendRows('tracks', trackRows);
 

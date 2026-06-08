@@ -2,7 +2,7 @@
 
 export type ExplicitContent = 'explicit' | 'clean' | 'not_explicit';
 export type TrackOrigin = 'original' | 'cover';
-export type CreditType = 'performer' | 'author' | 'production';
+export type CreditType = 'artist' | 'performer' | 'author' | 'production';
 export type ReleaseDateMode = 'asap' | 'specific';
 
 export interface CreditDraft {
@@ -35,6 +35,8 @@ export interface TrackDraft {
   youtube_content_id: boolean;
   tiktok_preview_start: boolean;
   tiktok_preview_seconds: number;
+  // Hora de salida de la canción en horario de España (CET/CEST), formato "HH:MM" (24h)
+  release_time: string;
   // MStep 4
   credits: CreditDraft[];
   // Estado de progreso (0-4 pasos completados)

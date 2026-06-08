@@ -187,6 +187,17 @@ input[type="date"].input-pill::-webkit-calendar-picker-indicator {
   cursor: pointer;
 }
 
+/* Time picker: mismo tratamiento que el date picker para que sea legible en oscuro */
+input[type="time"].input-pill {
+  background: #111111;
+  color-scheme: dark;
+  cursor: pointer;
+}
+input[type="time"].input-pill::-webkit-calendar-picker-indicator {
+  filter: invert(1) opacity(0.6);
+  cursor: pointer;
+}
+
 select.input-pill {
   appearance: none;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='%23EFEFE4' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
