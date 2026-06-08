@@ -48,12 +48,12 @@ async function appendRows(tab: string, rows: (string | number | boolean | undefi
 
 // releases: release_id | artist_email | artist_name | title | label | genre | title_language |
 //           previously_released | original_release_date | cover_drive_id | status |
-//           created_at | submitted_at | release_date_mode | release_date | stores
+//           created_at | submitted_at | release_date_mode | release_date | stores |
+//           release_time_es   (hora de salida en horario de España, HH:MM)
 //
 // tracks: track_id | release_id | track_number | title | recording_year | version |
 //         isrc | has_vocals | explicit_content | has_lyrics | lyrics_text |
-//         audio_master_drive_id | origin | youtube_content_id | tiktok_preview_seconds |
-//         release_time_es   (hora de salida en horario de España, HH:MM)
+//         audio_master_drive_id | origin | youtube_content_id | tiktok_preview_seconds
 //
 // credits: credit_id | track_id | credit_type | role | first_name | last_name |
 //          apple_music_url | spotify_url
@@ -93,6 +93,7 @@ export async function writeSubmission(payload: SubmitPayload): Promise<void> {
     release.release_date_mode,
     release.release_date,
     release.stores.join(', '),
+    release.release_time,
   ]]);
 
   // ── tracks ────────────────────────────────────────────────
@@ -112,7 +113,6 @@ export async function writeSubmission(payload: SubmitPayload): Promise<void> {
     t.origin,
     String(t.youtube_content_id),
     t.tiktok_preview_start ? String(t.tiktok_preview_seconds) : '',
-    t.release_time,
   ]);
   if (trackRows.length > 0) await appendRows('tracks', trackRows);
 

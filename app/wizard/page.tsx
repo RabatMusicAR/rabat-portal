@@ -29,8 +29,14 @@ const EMPTY_RELEASE: ReleaseForm = {
   cover_drive_id: '',
   release_date_mode: 'specific',
   release_date: '',
+  release_time: '',
   stores: [...STORES],
 };
+
+/** Horas de salida en saltos de 30 min: 00:00, 00:30, … 23:30 (horario España). */
+const RELEASE_TIMES: string[] = Array.from({ length: 48 }, (_, i) =>
+  `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 === 0 ? '00' : '30'}`,
+);
 
 /**
  * Genera un ID legible para el Sheet: {slug-del-nombre}-{6chars-random}
@@ -67,7 +73,6 @@ function emptyTrack(): TrackDraft {
     youtube_content_id: false,
     tiktok_preview_start: false,
     tiktok_preview_seconds: 0,
-    release_time: '',
     credits: [],
     completed_steps: 0,
   };
@@ -906,7 +911,7 @@ function WizardPageInner() {
                   </label>
                 </div>
                 {release.release_date_mode === 'specific' && (
-                  <div style={{ marginTop: 18 }}>
+                  <div style={{ marginTop: 18 }} className="form-stack">
                     <div className="field">
                       <label className="field-label">fecha</label>
                       <input
@@ -915,6 +920,15 @@ function WizardPageInner() {
                         min={(() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; })()}
                         value={release.release_date}
                         onChange={(e) => updateRelease('release_date', e.target.value)}
+                      />
+                    </div>
+                    <div className="field">
+                      <label className="field-label">hora de salida (españa · cet/cest)</label>
+                      <SearchableSelect
+                        options={RELEASE_TIMES}
+                        value={release.release_time}
+                        onChange={(v) => updateRelease('release_time', v)}
+                        placeholder="elige la hora…"
                       />
                     </div>
                   </div>
@@ -1140,7 +1154,7 @@ type CreditTypeMeta = {
   noun: string;
   roles: string[];
   required: boolean;                       // bloquea "FINALIZAR" si falta
-  links: 'none' | 'optional' | 'productor';
+  links: 'none' | 'productor' | 'artist';  // 'artist' = Spotify obligatorio, Apple opcional
   lastNameRequired: boolean;
 };
 
@@ -1149,11 +1163,11 @@ const CREDIT_ORDER: CreditType[] = ['artist', 'performer', 'author', 'production
 const CREDIT_META: Record<CreditType, CreditTypeMeta> = {
   artist: {
     title: 'artistas (principal / feat.)',
-    help: 'Añade artistas principales adicionales o invitados (feat.) de esta pista. Para cada uno puedes poner sus enlaces de Spotify y Apple Music (opcional).',
+    help: 'Añade artistas principales adicionales o invitados (feat.) de esta pista. Para cada uno: enlace de Spotify (obligatorio) y Apple Music (opcional).',
     noun: 'artista',
     roles: ['Artista principal', 'Artista invitado (feat.)'],
     required: false,
-    links: 'optional',
+    links: 'artist',
     lastNameRequired: false,
   },
   performer: {
@@ -1237,6 +1251,10 @@ function TrackModal({
       alert(m.lastNameRequired
         ? 'Selecciona al menos un rol e indica nombre y apellido.'
         : 'Selecciona al menos un rol e indica el nombre.');
+      return;
+    }
+    if (m.links === 'artist' && !f.spotify_url) {
+      alert('El enlace de Spotify es obligatorio para artistas (principal o feat.).');
       return;
     }
     if (m.links === 'productor' && f.roles.includes('Productor') && (!f.apple_music_url || !f.spotify_url)) {
@@ -1617,25 +1635,6 @@ function TrackModal({
                   </div>
                 )}
               </div>
-
-              <div className="field-block">
-                <div className="field-block-head">
-                  <span className="field-block-tag optional">opcional</span>
-                  <div className="field-block-title">hora de salida</div>
-                </div>
-                <p className="field-block-help">
-                  A qué hora saldrá esta canción, en horario de España (CET/CEST). Si lo dejas vacío, RABAT usa la hora por defecto.
-                </p>
-                <div className="field">
-                  <label className="field-label">hora (españa · cet/cest)</label>
-                  <input
-                    type="time"
-                    className="input-pill"
-                    value={track.release_time}
-                    onChange={(e) => onUpdate({ release_time: e.target.value })}
-                  />
-                </div>
-              </div>
             </div>
             <div className="wizard-nav">
               <button className="btn-secondary" onClick={() => onStepChange(2)}>atrás</button>
@@ -1659,7 +1658,7 @@ function TrackModal({
               const f = forms[type];
               const hasMin = existing.length > 0;
               // Enlaces Spotify/Apple: opcionales para artistas, obligatorios para Productor.
-              const wantLinks = m.links === 'optional' || (m.links === 'productor' && f.roles.includes('Productor'));
+              const wantLinks = m.links === 'artist' || (m.links === 'productor' && f.roles.includes('Productor'));
 
               return (
                 <div key={type} className="credits-section">
@@ -1745,17 +1744,17 @@ function TrackModal({
                           <div className="pf-eyebrow">
                             {m.links === 'productor'
                               ? '› solo para rol = productor: ambos enlaces obligatorios'
-                              : '› enlaces del artista (opcional)'}
+                              : '› spotify obligatorio · apple music opcional'}
                           </div>
                           <div className="field">
-                            <label className="field-label">apple music{m.links === 'optional' ? ' (opcional)' : ' — página del productor'}</label>
-                            <input type="url" className="input-pill" placeholder="https://music.apple.com/..."
-                              value={f.apple_music_url} onChange={(e) => updateForm(type, { apple_music_url: e.target.value })} />
-                          </div>
-                          <div className="field">
-                            <label className="field-label">spotify{m.links === 'optional' ? ' (opcional)' : ' — página del productor'}</label>
+                            <label className="field-label">spotify{m.links === 'artist' ? ' (obligatorio)' : ' — página del productor'}</label>
                             <input type="url" className="input-pill" placeholder="https://open.spotify.com/artist/..."
                               value={f.spotify_url} onChange={(e) => updateForm(type, { spotify_url: e.target.value })} />
+                          </div>
+                          <div className="field">
+                            <label className="field-label">apple music{m.links === 'artist' ? ' (opcional)' : ' — página del productor'}</label>
+                            <input type="url" className="input-pill" placeholder="https://music.apple.com/..."
+                              value={f.apple_music_url} onChange={(e) => updateForm(type, { apple_music_url: e.target.value })} />
                           </div>
                         </div>
                       )}

@@ -35,8 +35,6 @@ export interface TrackDraft {
   youtube_content_id: boolean;
   tiktok_preview_start: boolean;
   tiktok_preview_seconds: number;
-  // Hora de salida de la canción en horario de España (CET/CEST), formato "HH:MM" (24h)
-  release_time: string;
   // MStep 4
   credits: CreditDraft[];
   // Estado de progreso (0-4 pasos completados)
@@ -62,6 +60,8 @@ export interface ReleaseForm {
   cover_drive_id: string;
   release_date_mode: ReleaseDateMode;
   release_date: string;
+  // Hora de salida en horario de España (CET/CEST), formato "HH:MM" (saltos de 30 min)
+  release_time: string;
   stores: string[];
 }
 
