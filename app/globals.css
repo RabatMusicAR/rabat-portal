@@ -4,10 +4,9 @@
  * Tokens, tipografía y componentes base.
  * Fuentes (Anton + Space Mono) se cargan en layout.tsx.
  *
- * NOTA: Anton y Space Mono son sustitutos libres de las fuentes
- * oficiales del brandguide (Helvetica Neue Extra Black Condensed
- * + Monospac821 BT). Cuando RABAT licencie las oficiales,
- * sustituir con `next/font/local` en layout.tsx.
+ * Fuentes OFICIALES del brandguide, cargadas con next/font/local desde app/fonts:
+ *   display = Helvetica Neue Extra Black Condensed
+ *   mono    = Monospac821 BT
  * ============================================ */
 
 :root {
@@ -26,11 +25,11 @@
   --off-white-faint: rgba(239, 239, 228, 0.12);
   --off-white-ghost: rgba(239, 239, 228, 0.06);
 
-  /* display = Anton (condensed, display, títulos grandes)
-     mono    = Space Mono (body, labels, código UI)
-     Las variables --font-anton y --font-space-mono las inyecta next/font en layout.tsx. */
-  --font-display: var(--font-anton), 'Arial Black', sans-serif;
-  --font-mono: var(--font-space-mono), 'Courier New', monospace;
+  /* display = Helvetica Neue Condensed Black (títulos grandes)
+     mono    = Monospac821 BT (body, labels, código UI)
+     --font-display-face y --font-mono-face las inyecta next/font/local en layout.tsx. */
+  --font-display: var(--font-display-face), 'Arial Narrow', 'Arial Black', sans-serif;
+  --font-mono: var(--font-mono-face), 'Courier New', monospace;
 }
 
 * {
