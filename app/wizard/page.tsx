@@ -489,6 +489,7 @@ function WizardPageInner() {
         body: JSON.stringify({
           release_id: rid,
           artist_email: artistEmail,
+          release_folder_id: foldersRef.current?.releaseFolderId ?? '',
           // Excluir cover_preview (base64, puede ser 3-5 MB) y cover_filename (solo UI)
           // para no superar el límite de 4.5 MB de Vercel
           release: (({ cover_preview: _p, cover_filename: _f, ...r }) =>

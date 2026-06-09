@@ -69,6 +69,8 @@ export interface ReleaseForm {
 export interface SubmitPayload {
   release_id: string;
   artist_email: string;
+  // ID de la carpeta del release en Drive (para el link del email de aviso)
+  release_folder_id?: string;
   release: ReleaseForm;
   tracks: TrackDraft[];
   splits: SplitDraft[];

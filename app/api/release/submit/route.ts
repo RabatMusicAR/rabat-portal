@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { writeSubmission } from '@/lib/sheets';
+import { notifyNewSubmission } from '@/lib/notify';
 import type { SubmitPayload } from '@/types/wizard';
 
 export async function POST(req: NextRequest) {
@@ -30,6 +31,13 @@ export async function POST(req: NextRequest) {
     }
 
     await writeSubmission(payload);
+
+    // Avisar a RABAT por email (best-effort: no rompe el envío si el email falla)
+    try {
+      await notifyNewSubmission(payload);
+    } catch (e) {
+      console.error('[release/submit] notificación falló (no bloquea el envío):', e);
+    }
 
     return NextResponse.json({ ok: true, release_id: payload.release_id });
   } catch (err) {
