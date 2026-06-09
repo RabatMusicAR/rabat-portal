@@ -74,17 +74,17 @@ export default function LoginPage() {
         )}
 
         <p className="login-help">
-          te mandaremos un enlace mágico para entrar — sin contraseñas.
+          Esta plataforma solo esta habilitada para artistas registrados en Rabat Music
         </p>
         <p className="login-footer">
           ¿problemas?{' '}
-          <a href="mailto:hola@rabat.es" className="btn-secondary login-footer-link">
+          <a href="mailto:ar@rabatmusicgroup.com" className="btn-secondary login-footer-link">
             escríbenos
           </a>
         </p>
       </div>
 
-      <div className="login-corner-badge">v0.4 · next.js scaffold</div>
+      <div className="login-corner-badge">Beta v0.4 Distribucion</div>
     </main>
   );
 }
