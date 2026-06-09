@@ -416,7 +416,7 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
   margin-top: 24px;
   font-size: 12px;
   color: var(--off-white-dim);
-  text-transform: lowercase;
+  text-transform: none;
 }
 .login-footer {
   margin-top: 56px;
