@@ -16,7 +16,7 @@
   color-scheme: dark;
 
   /* Brand colors */
-  --black: #000000;
+  --black: #111111;
   --blue: #0000FF;
   --off-white: #EFEFE4;
   --yellow: #F9FF00;
@@ -717,6 +717,10 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
 .audio-uploader .au-meta { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; color: var(--off-white-dim); text-transform: uppercase; }
 .lyrics-divider { display: flex; align-items: center; gap: 16px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--off-white-dim); margin: 20px 0; }
 .lyrics-divider::before, .lyrics-divider::after { content: ''; flex: 1; height: 1px; background: var(--off-white-faint); }
+.lyrics-note { margin-top: 16px; padding: 14px 18px; border-radius: 14px; background: rgba(249, 255, 0, 0.06); border: 1px solid var(--yellow); display: flex; flex-direction: column; gap: 6px; }
+.lyrics-note strong { font-family: var(--font-mono); font-weight: 700; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--yellow); }
+.lyrics-note strong::before { content: '› '; }
+.lyrics-note span { font-size: 12px; color: var(--off-white); line-height: 1.55; }
 
 /* ============================================
  * SUBMIT OVERLAY

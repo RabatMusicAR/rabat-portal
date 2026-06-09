@@ -637,15 +637,6 @@ function WizardPageInner() {
                       onChange={(e) => updateRelease('title', e.target.value)}
                     />
                   </div>
-                  <div className="field">
-                    <label className="field-label">sello discográfico</label>
-                    <input
-                      type="text"
-                      className="input-pill"
-                      value={release.label}
-                      onChange={(e) => updateRelease('label', e.target.value)}
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -1181,7 +1172,7 @@ const CREDIT_META: Record<CreditType, CreditTypeMeta> = {
     title: 'artistas (principal / feat.)',
     help: 'Añade artistas principales adicionales o invitados (feat.) de esta pista. Para cada uno: enlace de Spotify (obligatorio) y Apple Music (opcional).',
     noun: 'artista',
-    roles: ['Artista principal', 'Artista invitado (feat.)'],
+    roles: ['Artista principal', 'Artista invitado (feat.)', 'Remixer'],
     required: false,
     links: 'artist',
     lastNameRequired: false,
@@ -1489,6 +1480,10 @@ function TrackModal({
                 <p className="field-block-help" style={{ marginTop: 14 }}>
                   Solo si la pista tiene voces. La letra debe coincidir exactamente con lo cantado.
                 </p>
+                <div className="lyrics-note">
+                  <strong>la letra que añadas aquí se envía a apple music</strong>
+                  <span>Para que aparezca también en Spotify (y de forma animada/sincronizada), debes seguir usando Musixmatch — eso se gestiona aparte en musixmatch.com.</span>
+                </div>
               </div>
               {track.has_lyrics && (
                 <div className="field-block">
