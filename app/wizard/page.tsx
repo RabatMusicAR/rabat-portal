@@ -250,6 +250,11 @@ function WizardPageInner() {
     tracksRef.current = tracks;
   }, [tracks]);
 
+  // Al cambiar de paso, llevar la vista al principio de la ventana para leer desde arriba.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [step]);
+
   // ── Helpers de estado ───────────────────────────────────────────────────────
 
   const updateRelease = useCallback(
@@ -714,6 +719,7 @@ function WizardPageInner() {
                         max={new Date().toISOString().split('T')[0]}
                         value={release.original_release_date}
                         onChange={(e) => updateRelease('original_release_date', e.target.value)}
+                        onClick={(e) => { try { e.currentTarget.showPicker(); } catch {} }}
                       />
                     </div>
                   </div>
@@ -920,6 +926,7 @@ function WizardPageInner() {
                         min={(() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split('T')[0]; })()}
                         value={release.release_date}
                         onChange={(e) => updateRelease('release_date', e.target.value)}
+                        onClick={(e) => { try { e.currentTarget.showPicker(); } catch {} }}
                       />
                     </div>
                     <div className="field">
@@ -1062,27 +1069,36 @@ function WizardPageInner() {
                   <span className="field-block-tag summary">resumen</span>
                   <div className="field-block-title">así queda</div>
                 </div>
-                <div className="summary-block">
-                  <div className="summary-row"><span className="sr-label">artista</span><span className="sr-value">{release.artist_name || '—'}</span></div>
-                  <div className="summary-row"><span className="sr-label">título</span><span className="sr-value">{release.title || '—'}</span></div>
-                  <div className="summary-row"><span className="sr-label">sello</span><span className="sr-value">{release.label || 'RABAT'}</span></div>
-                  <div className="summary-row"><span className="sr-label">género</span><span className="sr-value thin">{release.genre || '—'}</span></div>
-                  <div className="summary-row"><span className="sr-label">idioma</span><span className="sr-value thin">{release.title_language || '—'}</span></div>
-                  <div className="summary-row"><span className="sr-label">pistas</span><span className="sr-value">{tracks.length} pista{tracks.length !== 1 ? 's' : ''}</span></div>
-                  <div className="summary-row">
-                    <span className="sr-label">fecha</span>
-                    <span className="sr-value thin">
-                      {release.release_date_mode === 'asap' ? 'lo antes posible' : (release.release_date || '—')}
-                    </span>
+                <div className="summary-layout">
+                  <div className="summary-block">
+                    <div className="summary-row"><span className="sr-label">artista</span><span className="sr-value">{release.artist_name || '—'}</span></div>
+                    <div className="summary-row"><span className="sr-label">título</span><span className="sr-value">{release.title || '—'}</span></div>
+                    <div className="summary-row"><span className="sr-label">sello</span><span className="sr-value">{release.label || 'RABAT'}</span></div>
+                    <div className="summary-row"><span className="sr-label">género</span><span className="sr-value thin">{release.genre || '—'}</span></div>
+                    <div className="summary-row"><span className="sr-label">idioma</span><span className="sr-value thin">{release.title_language || '—'}</span></div>
+                    <div className="summary-row"><span className="sr-label">pistas</span><span className="sr-value">{tracks.length} pista{tracks.length !== 1 ? 's' : ''}</span></div>
+                    <div className="summary-row">
+                      <span className="sr-label">fecha</span>
+                      <span className="sr-value thin">
+                        {release.release_date_mode === 'asap'
+                          ? 'lo antes posible'
+                          : `${release.release_date || '—'}${release.release_time ? ` · ${release.release_time} (ES)` : ''}`}
+                      </span>
+                    </div>
+                    <div className="summary-row">
+                      <span className="sr-label">tiendas</span>
+                      <span className="sr-value thin">
+                        {release.stores.length === STORES.length
+                          ? 'todas las plataformas'
+                          : `${release.stores.length}: ${release.stores.slice(0, 3).join(', ')}${release.stores.length > 3 ? '…' : ''}`}
+                      </span>
+                    </div>
                   </div>
-                  <div className="summary-row">
-                    <span className="sr-label">tiendas</span>
-                    <span className="sr-value thin">
-                      {release.stores.length === STORES.length
-                        ? 'todas las plataformas'
-                        : `${release.stores.length}: ${release.stores.slice(0, 3).join(', ')}${release.stores.length > 3 ? '…' : ''}`}
-                    </span>
-                  </div>
+                  {release.cover_preview && (
+                    <div className="summary-cover">
+                      <img src={release.cover_preview} alt="portada" />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1294,11 +1310,17 @@ function TrackModal({
     (type) => track.credits.some((c) => c.credit_type === type),
   );
 
+  // Al cambiar de sub-paso (o al abrir), llevar el scroll del modal al principio.
+  const backdropRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    backdropRef.current?.scrollTo({ top: 0 });
+  }, [modalStep]);
+
   // El backdrop NO cierra al hacer clic: en formularios largos es muy fácil tocar
   // el fondo negro sin querer y perder el sitio. Se cierra solo con la ✕ o los
   // botones; al tocar fuera de un desplegable solo se cierra ese desplegable.
   return (
-    <div className="modal-backdrop open">
+    <div className="modal-backdrop open" ref={backdropRef}>
       <div className="modal-panel">
         <div className="modal-header">
           <div className="modal-title-block">

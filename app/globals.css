@@ -342,7 +342,7 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
 .check-row.on .cb::after { content: '✓'; color: var(--black); font-weight: 700; font-size: 14px; line-height: 1; }
 .check-row .cb-text strong {
   font-family: var(--font-display);
-  font-size: 18px;
+  font-size: 13px;
   letter-spacing: -0.01em;
   text-transform: uppercase;
   display: block;
@@ -612,7 +612,7 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
 .track-row { display: grid; grid-template-columns: 48px 1fr auto auto; gap: 20px; align-items: center; padding: 16px 20px; border: 1px solid var(--off-white-faint); border-radius: 16px; background: var(--off-white-ghost); transition: border-color 0.15s; }
 .track-row:hover { border-color: var(--off-white); }
 .track-num { font-family: var(--font-display); font-size: 32px; color: var(--off-white-dim); text-align: center; line-height: 1; }
-.track-info .tr-title { font-family: var(--font-display); font-size: 22px; letter-spacing: -0.02em; text-transform: uppercase; line-height: 1.1; }
+.track-info .tr-title { font-family: var(--font-display); font-size: 22px; letter-spacing: -0.02em; text-transform: none; line-height: 1.1; }
 .track-info .tr-sub { font-size: 11px; color: var(--off-white-dim); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 4px; }
 .track-mini-progress { display: flex; gap: 3px; }
 .track-mini-progress span { width: 18px; height: 6px; border-radius: 999px; background: var(--off-white-faint); }
@@ -656,8 +656,15 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
 .summary-row { display: grid; grid-template-columns: 130px 1fr; gap: 16px; padding: 14px 0; border-bottom: 1px dashed var(--off-white-faint); align-items: baseline; }
 .summary-row:last-child { border-bottom: none; }
 .summary-row .sr-label { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--off-white-dim); }
-.summary-row .sr-value { font-family: var(--font-display); font-size: 20px; letter-spacing: -0.02em; text-transform: uppercase; line-height: 1.1; }
+.summary-row .sr-value { font-family: var(--font-display); font-size: 20px; letter-spacing: -0.02em; text-transform: none; line-height: 1.1; }
 .summary-row .sr-value.thin { font-family: var(--font-mono); font-size: 14px; text-transform: none; letter-spacing: -0.02em; }
+
+/* Resumen con portada al lado derecho */
+.summary-layout { display: grid; grid-template-columns: 1fr 200px; gap: 28px; align-items: start; }
+.summary-layout .summary-block { min-width: 0; }
+.summary-cover { width: 200px; aspect-ratio: 1 / 1; border-radius: 16px; overflow: hidden; border: 1px solid var(--off-white-faint); background: var(--off-white-ghost); }
+.summary-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (max-width: 600px) { .summary-layout { grid-template-columns: 1fr; } .summary-cover { width: 100%; max-width: 240px; } }
 
 /* ============================================
  * TRACK MODAL
@@ -686,7 +693,7 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
 .credit-row { display: grid; grid-template-columns: 32px 1fr auto; gap: 14px; align-items: center; padding: 12px 16px; border: 1px solid var(--off-white-faint); border-radius: 999px; background: var(--off-white-ghost); }
 .credit-row .ci-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--blue); font-family: var(--font-display); font-size: 14px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .credit-row .ci-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.credit-row .ci-name { font-family: var(--font-display); font-size: 17px; letter-spacing: -0.01em; text-transform: uppercase; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.credit-row .ci-name { font-family: var(--font-display); font-size: 17px; letter-spacing: -0.01em; text-transform: none; line-height: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .credit-row .ci-role { font-size: 10px; color: var(--off-white-dim); letter-spacing: 0.08em; text-transform: uppercase; }
 .credit-row .ci-extra { font-size: 11px; color: var(--off-white-dim); margin-top: 2px; }
 .credit-row .ci-extra a { color: var(--yellow); text-decoration: underline; text-underline-offset: 2px; }

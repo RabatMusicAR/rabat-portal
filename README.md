@@ -70,3 +70,14 @@ configurando Drive, Sheets y auth.
 ```bash
 cp .env.example .env.local
 ```
+## ASI SE HACE EL DEPLOY 
+## Requisito: trabaja siempre dentro de la carpeta del proyecto (ahí está el .git):
+
+# cd "/Users/SadocJr/Downloads/Rabat Portal/rabat-portal"
+# Pasos exactos:
+
+# cd "/Users/SadocJr/Downloads/Rabat Portal/rabat-portal"
+# npm run build          # opcional pero recomendado: si falla, no subas
+# git add -A
+# git commit -m "tu mensaje"
+# git push origin main   # ← esto deploya a producción automáticamente
