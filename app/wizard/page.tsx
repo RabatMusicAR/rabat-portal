@@ -1197,7 +1197,7 @@ const CREDIT_META: Record<CreditType, CreditTypeMeta> = {
   },
   production: {
     title: 'créditos de producción',
-    help: 'Obligatorio: al menos un colaborador técnico. El rol Productor requiere enlaces de Apple Music y Spotify.',
+    help: 'Obligatorio: al menos un colaborador técnico. El rol Productor pide el enlace de Spotify (Apple Music opcional).',
     noun: 'colaborador',
     roles: ['Productor','Co-productor','Ingeniero de mezcla','Ingeniero de masterización','Ingeniero de grabación','Ingeniero','Ingeniero asistente','Diseño gráfico'],
     required: true,
@@ -1260,12 +1260,11 @@ function TrackModal({
         : 'Selecciona al menos un rol e indica el nombre.');
       return;
     }
-    if (m.links === 'artist' && !f.spotify_url) {
-      alert('El enlace de Spotify es obligatorio para artistas (principal o feat.).');
-      return;
-    }
-    if (m.links === 'productor' && f.roles.includes('Productor') && (!f.apple_music_url || !f.spotify_url)) {
-      alert('El rol Productor requiere los enlaces de Apple Music y Spotify.');
+    // Spotify obligatorio cuando aplica; Apple Music SIEMPRE opcional (si falta, se
+    // creará un perfil nuevo en Apple Music para el artista/productor).
+    const needsSpotify = m.links === 'artist' || (m.links === 'productor' && f.roles.includes('Productor'));
+    if (needsSpotify && !f.spotify_url) {
+      alert('El enlace de Spotify es obligatorio.');
       return;
     }
     const newCredit: CreditDraft = {
@@ -1758,20 +1757,19 @@ function TrackModal({
                       </div>
                       {wantLinks && (
                         <div className="producer-fields show">
-                          <div className="pf-eyebrow">
-                            {m.links === 'productor'
-                              ? '› solo para rol = productor: ambos enlaces obligatorios'
-                              : '› spotify obligatorio · apple music opcional'}
-                          </div>
+                          <div className="pf-eyebrow">› spotify obligatorio · apple music opcional</div>
                           <div className="field">
-                            <label className="field-label">spotify{m.links === 'artist' ? ' (obligatorio)' : ' — página del productor'}</label>
+                            <label className="field-label">{m.links === 'productor' ? 'spotify del productor (obligatorio)' : 'spotify (obligatorio)'}</label>
                             <input type="url" className="input-pill" placeholder="https://open.spotify.com/artist/..."
                               value={f.spotify_url} onChange={(e) => updateForm(type, { spotify_url: e.target.value })} />
                           </div>
                           <div className="field">
-                            <label className="field-label">apple music{m.links === 'artist' ? ' (opcional)' : ' — página del productor'}</label>
+                            <label className="field-label">{m.links === 'productor' ? 'apple music del productor (opcional)' : 'apple music (opcional)'}</label>
                             <input type="url" className="input-pill" placeholder="https://music.apple.com/..."
                               value={f.apple_music_url} onChange={(e) => updateForm(type, { apple_music_url: e.target.value })} />
+                            <p style={{ fontSize: 11, color: 'var(--off-white-dim)', marginTop: 6, paddingLeft: 4, lineHeight: 1.4 }}>
+                              opcional — si lo dejas vacío, se creará un perfil nuevo en Apple Music para {m.links === 'productor' ? 'el productor' : 'el artista'}.
+                            </p>
                           </div>
                         </div>
                       )}
