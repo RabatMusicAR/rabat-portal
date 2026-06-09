@@ -456,7 +456,7 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
 /* Logo central de la homepage aumentado en ~30% para mayor presencia sin perder
    el comportamiento responsive. */
 .login-hero-logo {
-  width: clamp(510px, 72vw, 845px); /* tamaño del logo central grande */
+  width: clamp(220px, 72vw, 845px); /* tamaño del logo central grande (escala en móvil) */
   height: auto;
 }
 
@@ -742,11 +742,30 @@ select.input-pill option { background: var(--black); color: var(--off-white); }
  * ============================================ */
 @media (max-width: 720px) {
   .top-bar { padding: 16px 20px; }
+  .top-bar .user { font-size: 12px; gap: 10px; }
+  .top-bar .user span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wizard-wrap { padding: 32px 20px 100px; }
   .progress-labels { display: none; }
+  .field-block { padding: 24px 20px 20px; }
   .modal-panel { padding: 24px 20px; margin: 0 12px; }
   .track-row { grid-template-columns: 36px 1fr auto; }
   .track-mini-progress { display: none; }
+  .login-container { padding: 24px; }
+  .login-tagline { font-size: 14px; margin-bottom: 40px; }
+}
+
+/* Teléfonos: apila título+paso y cabeceras de sección, reduce los display grandes */
+@media (max-width: 560px) {
+  .wizard-title-row { flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 32px; }
+  .wizard-title { font-size: 40px; line-height: 0.9; }
+  .wizard-step-num { font-size: 18px; padding-bottom: 0; }
+  .field-block-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .field-block-title { font-size: 21px; }
+  .modal-header { flex-direction: column; gap: 14px; }
+  .modal-step-info { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+  .modal-title-block .mt-title { font-size: 32px; }
+  .login-tagline { font-size: 13px; margin-bottom: 32px; }
+  .login-corner-badge { right: 16px; bottom: 16px; }
 }
 
 /* ============================================
